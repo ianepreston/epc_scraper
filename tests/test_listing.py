@@ -4,6 +4,7 @@ import pytest
 
 from epc_scraper.listing import (
     _extract_ajax_target,
+    _extract_form_fields,
     _extract_osvstate,
     _parse_total_records,
     parse_listing_page,
@@ -95,6 +96,25 @@ class TestExtractAjaxTarget:
     def test_returns_none_for_missing_class(self, listing_page_html: str) -> None:
         result = _extract_ajax_target(listing_page_html, "NonExistent")
         assert result is None
+
+
+class TestExtractFormFields:
+    """Tests for _extract_form_fields."""
+
+    def test_extracts_hidden_inputs(self, listing_page_html: str) -> None:
+        fields = _extract_form_fields(listing_page_html)
+        assert fields["__OSVSTATE"] == "fake_state"
+        assert fields["__VIEWSTATE"] == ""
+        assert fields["__VIEWSTATEGENERATOR"] == "CAC16F6E"
+
+    def test_ignores_submit_buttons(self, listing_page_html: str) -> None:
+        fields = _extract_form_fields(listing_page_html)
+        for name in fields:
+            assert "submit" not in name.lower() or fields[name] != "Search"
+
+    def test_empty_page(self) -> None:
+        fields = _extract_form_fields("<html><body></body></html>")
+        assert fields == {}
 
 
 class TestScrapeListingIntegration:

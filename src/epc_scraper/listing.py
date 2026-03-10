@@ -118,8 +118,53 @@ def _extract_ajax_target(html: str, link_class: str) -> tuple[str, str] | None:
     return match.group(1), match.group(2)
 
 
+def _extract_form_fields(html: str) -> dict[str, str]:
+    """Extract all named input/select/textarea values from the page form.
+
+    OutSystems AJAX posts require the full form serialization.
+    The __OSVSTATE hidden input contains a placeholder value that
+    gets replaced by JavaScript after DOM ready, so we also extract
+    the real value from the inline script.
+
+    Args:
+        html: Raw HTML of a listing page.
+
+    Returns:
+        Dictionary of field name to value for all form inputs.
+    """
+    tree = HTMLParser(html)
+    fields: dict[str, str] = {}
+
+    for inp in tree.css("input[name]"):
+        name = inp.attributes.get("name") or ""
+        input_type = (inp.attributes.get("type") or "text").lower()
+        if input_type in ("checkbox", "radio"):
+            if inp.attributes.get("checked") is not None:
+                fields[name] = inp.attributes.get("value") or "on"
+        elif input_type != "submit":
+            fields[name] = inp.attributes.get("value") or ""
+
+    for sel in tree.css("select[name]"):
+        name = sel.attributes.get("name") or ""
+        selected = sel.css_first("option[selected]")
+        fields[name] = (selected.attributes.get("value") or "") if selected else ""
+
+    for ta in tree.css("textarea[name]"):
+        name = ta.attributes.get("name") or ""
+        fields[name] = ta.text() or ""
+
+    js_osvstate = re.search(r"\('input\[name=__OSVSTATE\]'\)\.val\('([^']+)'\)", html)
+    if js_osvstate:
+        fields["__OSVSTATE"] = js_osvstate.group(1)
+
+    return fields
+
+
 def _extract_osvstate(html: str) -> str:
-    """Extract the __OSVSTATE hidden field value from the page.
+    """Extract the __OSVSTATE value from the page.
+
+    OutSystems replaces the hidden input value via JavaScript after
+    DOM ready, so prefer the JS-set value over the input attribute.
 
     Args:
         html: Raw HTML of a listing page.
@@ -130,6 +175,10 @@ def _extract_osvstate(html: str) -> str:
     Raises:
         ValueError: If the OSVSTATE field cannot be found.
     """
+    js_match = re.search(r"\('input\[name=__OSVSTATE\]'\)\.val\('([^']+)'\)", html)
+    if js_match:
+        return js_match.group(1)
+
     tree = HTMLParser(html)
     field = tree.css_first("input[name='__OSVSTATE']")
     if field is None:
@@ -142,8 +191,8 @@ async def scrape_listing(
 ) -> AsyncIterator[EPCListingRecord]:
     """Scrape all pages of the EPC listing table.
 
-    Navigates through all pages using ASP.NET AJAX postbacks and
-    yields each EPCListingRecord found.
+    Navigates through all pages using OutSystems AJAX postbacks,
+    serializing the full form state for each page transition.
 
     Args:
         delay: Seconds to wait between page requests.
@@ -171,7 +220,6 @@ async def scrape_listing(
         for page_num in range(2, pages + 1):
             await asyncio.sleep(delay)
 
-            osvstate = _extract_osvstate(page_html)
             next_target = _extract_ajax_target(page_html, "ListNavigation_Next")
             if next_target is None:
                 logger.warning(
@@ -179,25 +227,18 @@ async def scrape_listing(
                 )
                 break
 
-            element_id, postback_name = next_target
+            _element_id, postback_name = next_target
+            fields = _extract_form_fields(page_html)
 
             form_data = {
-                "__OSVSTATE": osvstate,
+                "__OSVSTATE": fields["__OSVSTATE"],
                 "__VIEWSTATE": "",
-                "__VIEWSTATEGENERATOR": "CAC16F6E",
-                "__AJAX": f"{element_id},,{postback_name},,",
+                "__VIEWSTATEGENERATOR": fields.get("__VIEWSTATEGENERATOR", ""),
+                "__EVENTTARGET": postback_name,
+                "__EVENTARGUMENT": "",
             }
 
-            response = await client.post(
-                LISTING_URL,
-                data=form_data,
-                headers={
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Content-Type": (
-                        "application/x-www-form-urlencoded; charset=UTF-8"
-                    ),
-                },
-            )
+            response = await client.post(LISTING_URL, data=form_data)
             response.raise_for_status()
             page_html = response.text
 

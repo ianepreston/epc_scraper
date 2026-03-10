@@ -117,9 +117,30 @@ print(f"Wrote {len(credits)} credits to {output_path}")
 git clone https://github.com/ianepreston/epc_scraper.git
 cd epc_scraper
 uv sync --all-extras
-uv run pytest
-uv run mypy src/
+```
+
+### Running tests
+
+Unit tests run by default and require no network access:
+
+```bash
+uv run pytest                  # unit tests only (default)
+```
+
+Live integration tests make real HTTP requests to the registry and are skipped
+by default. Run them explicitly with the `live` marker:
+
+```bash
+uv run pytest -m live          # live tests only
+uv run pytest -m ""            # all tests (unit + live)
+```
+
+### Linting and type checking
+
+```bash
 uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
+uv run mypy src/
 ```
 
 ## License
