@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 import httpx
+import nest_asyncio  # type: ignore[import-untyped]
 
 from epc_scraper.detail import scrape_detail
 from epc_scraper.listing import scrape_listing
@@ -76,4 +77,5 @@ def scrape_all_sync(
     Returns:
         List of all EPCCredit records scraped from the registry.
     """
+    nest_asyncio.apply()
     return asyncio.run(scrape_all(concurrency=concurrency, delay=delay))
